@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PIP Budget Generator - P0.2 Complete Release</title>
+<title>PIP Budget Generator - P0.2 Operational Release</title>
 <style>
 :root{
   --navy:#0e2a55; --blue:#0b4a9e; --blue-d:#083a7e; --blue-l:#dbe8fb; --blue-xl:#eef4fd;
@@ -267,7 +267,7 @@ const MATERIALS = [
 ];
 
 /* ───────── state ───────── */
-const KEY = 'pip-budget-p02-complete-v3';
+const KEY = 'pip-budget-p02-operational-v4';
 function defaults(){ return {
   scope:{loc:'Rural', communities:2, missions:1, days:5},
   people:{sel:{STF003:{travel:true}, STF004:{travel:true}}, guests:0},
@@ -739,7 +739,7 @@ function parseWorkbook(wb){
   const ps = findSheet(wb,'PROJECT SETUP');
   if (ps){ const {rows} = rowsOf(ps);
     const val = lbl => { for (const r of rows){ const i = r.indexOf(lbl); if (i>=0){ for (let j=i+1;j<r.length;j++) if (r[j]!=null) return r[j]; } } return null; };
-    out.communities = val('Number of Communities'); const cu = val('Currency'); if (typeof cu==='string' && cu.length===3) out.currency = cu; }
+    out.communities = val('Number of Communities'); out.country = val('Country') || val('Project Country') || ''; const cu = val('Currency'); if (typeof cu==='string' && cu.length===3) out.currency = cu; }
   /* staff */
   const ss = findSheet(wb,'STAFF SETUP');
   if (ss){ const {rows} = rowsOf(ss); const st = [];
@@ -763,12 +763,70 @@ function downloadXlsx(){
   const wsSummary=XLSX.utils.aoa_to_sheet(summaryAoa); wsSummary['!cols']=[28,45].map(w=>({wch:w}));
   const inputsAoa=[['Section','Field','Value'],['Scope','Location type',F.scope.loc],['Scope','Communities',F.scope.communities],['Scope','Missions',F.scope.missions],['Scope','Days',F.scope.days],['Meetings','Required',F.meet.need?'Yes':'No'],['Meetings','Count',meetCount()],['Meetings','Participants',F.meet.participants],['Meetings','Venue',F.meet.venue],['Meetings','Refreshments',F.meet.refresh]].concat(MATERIALS.filter(m=>F.mat[m.id]&&F.mat[m.id].on).map(m=>['Materials',m.label,matQty(m)]));
   const wsInputs=XLSX.utils.aoa_to_sheet(inputsAoa); wsInputs['!cols']=[18,36,22].map(w=>({wch:w}));
-  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, wsSummary, 'P0.2 summary'); XLSX.utils.book_append_sheet(wb, ws, 'P0.2 cost lines'); XLSX.utils.book_append_sheet(wb, wsStaff, 'P0.2 staff time'); XLSX.utils.book_append_sheet(wb, wsTravel, 'P0.2 travel plan'); XLSX.utils.book_append_sheet(wb, wsInputs, 'P0.2 inputs');
+  const customAoa=[['Type','ID / Standard Cost ID','Description / Role','Name','Organisation','Unit','Quantity']].concat((F.customStaff||[]).map(x=>['Staff',x.id,x.role,x.name||'',x.org,'','']),(F.customMaterials||[]).map(x=>['Material',x.item||'',x.name,'','',x.unit,x.qty])); const wsCustom=XLSX.utils.aoa_to_sheet(customAoa); wsCustom['!cols']=[14,22,32,24,28,14,14].map(w=>({wch:w}));
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, wsSummary, 'P0.2 summary'); XLSX.utils.book_append_sheet(wb, ws, 'P0.2 cost lines'); XLSX.utils.book_append_sheet(wb, wsStaff, 'P0.2 staff time'); XLSX.utils.book_append_sheet(wb, wsTravel, 'P0.2 travel plan'); XLSX.utils.book_append_sheet(wb, wsInputs, 'P0.2 inputs'); XLSX.utils.book_append_sheet(wb, wsCustom, 'P0.2 additions');
   XLSX.writeFile(wb, 'PIP_P0.2_complete_export.xlsx');
 }
 
 /* ───────── start ───────── */
+
+/* ───────── Operational release v4: reusable people, routes, meals, materials and dynamic staff hours ───────── */
+const BASE_STAFF_HOURS={STF001:52,STF002:50.8,STF003:151.7,STF004:90.3};
+function ensureV4(){
+  F.customStaff=F.customStaff||[]; F.customMaterials=F.customMaterials||[]; F.savedRoutes=F.savedRoutes||{};
+  F.travel.breakfastRequired=F.travel.breakfast===false; F.travel.lunch=F.travel.lunch!==false; F.travel.dinner=F.travel.dinner!==false;
+  F.staffAuto=F.staffAuto!==false;
+  F.customStaff.forEach(x=>{if(!STAFF.some(s=>s.id===x.id)) STAFF.push(x); if(!F.people.sel[x.id])F.people.sel[x.id]={travel:true,stay:true};if(!F.staffTime[x.id])F.staffTime[x.id]={preparation:0,implementation:0,followup:0,travel:0};});
+}
+function projectCountry(){return (WB&&WB.country)||'Tanzania';}
+function routeStore(){const c=projectCountry();if(!F.savedRoutes[c])F.savedRoutes[c]=[];return F.savedRoutes[c];}
+function availableRoutes(){
+  const c=projectCountry(); const base=[];
+  if(/tanzania/i.test(c)) base.push({id:'tz-arusha-chemba',label:'Project Office (Arusha) → Chemba Town',origin:'Project Office (Arusha)',dest:'Chemba Town',km:205},{id:'tz-arusha-dodoma',label:'Project Office (Arusha) → Dodoma',origin:'Project Office (Arusha)',dest:'Dodoma',km:440},{id:'tz-chemba-community',label:'Chemba Town → Project community',origin:'Chemba Town',dest:'Project community',km:60});
+  if(/kenya/i.test(c)) base.push({id:'ke-nairobi-naivasha',label:'Nairobi → Naivasha',origin:'Nairobi',dest:'Naivasha',km:95});
+  return base.concat(routeStore());
+}
+function selectRoute(id){const r=availableRoutes().find(x=>x.id===id);if(!r)return;F.travel.route=id;F.travel.origin=r.origin;F.travel.dest=r.dest;F.travel.oneWayKm=N(r.km);F.travel.km=routeDistance();if(F.travel.autoTravelHours)syncTravelHours();}
+function autoStaffHours(){
+  if(!F.staffAuto)return; const scale=Math.max(0.1,N(F.scope.communities)/2)*Math.max(0.1,N(F.scope.missions))*Math.max(0.2,N(F.scope.days)/5);
+  STAFF.forEach(st=>{if(!F.staffTime[st.id])F.staffTime[st.id]={preparation:0,implementation:0,followup:0,travel:0};if(BASE_STAFF_HOURS[st.id]!=null)F.staffTime[st.id].implementation=Math.round(BASE_STAFF_HOURS[st.id]*scale*10)/10;});
+  syncTravelHours();
+}
+const oldStepPeople=stepPeople;
+stepPeople=function(){
+  const rows=STAFF.map(s=>`<tr><td style="width:44px"><input type="checkbox" data-path="people.sel.${s.id}.travel" style="width:18px;height:18px;accent-color:var(--blue)"></td><td><b>${esc(s.role||'Staff member')}</b>${s.name?` <span class="hint">· ${esc(s.name)}</span>`:''}</td><td><span class="pill">${esc(s.org||'Not specified')}</span></td><td class="r hint">${esc(s.id)}</td></tr>`).join('');
+  return `<h2 class="step-t">People</h2><p class="step-s">Select travelling staff and add extra people when the project team differs from the workbook.</p>
+  <div class="card"><h3>${ico('users')}Project staff</h3><div style="overflow-x:auto"><table><thead><tr><th></th><th>Role / person</th><th>Organisation</th><th class="r">ID</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+  <div class="card"><h3>${ico('user')}Add another staff member</h3><div class="row c2"><div class="fld"><label>Staff title</label><input id="newStaffRole" placeholder="e.g. PIP Facilitator"></div><div class="fld"><label>Person name (optional)</label><input id="newStaffName"></div><div class="fld"><label>Organisation</label><input id="newStaffOrg" placeholder="e.g. Dorcas Tanzania / Local partner"></div><div class="fld"><label>Travels on this mission</label><select id="newStaffTravel"><option value="yes">Yes</option><option value="no">No</option></select></div></div><button class="btn" id="addStaffMember" type="button">Add staff member</button><div class="hint" style="margin-top:8px">The same title may be used more than once, for example two PIP Facilitators.</div></div>
+  <div class="card"><h3>${ico('user')}External guests</h3><div class="fld"><label>Guests travelling with the team</label>${numIn('people.guests',{min:0,suffix:'people'})}</div></div>`;
+};
+stepTravel=function(){
+  const ro=availableRoutes(); const routeOpts=ro.map(r=>[r.id,r.label]); if(!F.travel.route&&ro[0])selectRoute(ro[0].id);
+  return `<h2 class="step-t">Travel &amp; stay</h2><p class="step-s">Choose a route. Distances, vehicle kilometres and travel time are calculated in the background.</p>
+  <div class="card"><h3>${ico('map')}Route</h3><div class="row c2"><div class="fld"><label>Route for ${esc(projectCountry())}</label>${sel('travel.route',routeOpts)}<div class="hint">Only routes stored for this project country are shown.</div></div><div class="fld"><label>Number of trips</label>${numIn('travel.trips',{min:1,suffix:'trips'})}</div><div class="fld"><label>Journey type</label>${sel('travel.roundTrip',[[true,'Return trip'],[false,'One way']])}</div><div class="fld"><label>Selected route</label><div class="rowline"><b>${esc(F.travel.origin)} → ${esc(F.travel.dest)}</b><span class="hint">${nf(routeDistance())} km total · ${nf(travelHoursPerPerson())} hours/person</span></div></div></div><button class="btn sm" type="button" id="showRouteForm">Add a route</button></div>
+  <div class="card" ${F.travel.showAddRoute?'':'hidden'}><h3>${ico('map')}Add route for ${esc(projectCountry())}</h3><div class="row c2"><div class="fld"><label>From</label><input id="routeFrom"></div><div class="fld"><label>To</label><input id="routeTo"></div><div class="fld"><label>One-way distance</label><div class="sfx"><input id="routeKm" type="number" min="0"><span>km</span></div></div><div class="fld"><label>Average speed</label><div class="sfx"><input id="routeSpeed" type="number" min="1" value="50"><span>km/h</span></div></div></div><button id="saveRoute" class="btn" type="button">Save and use this route</button></div>
+  <div class="card"><h3>${ico('car')}Travel arrangements</h3><div class="inline"><span class="lab">Does anyone need to travel?</span>${seg('travel.need')}</div><div class="row c2"><div class="fld"><label>Transport</label>${sel('travel.transport',TRANSPORTS)}</div><div class="fld"><label>Vehicles</label>${numIn('travel.vehicles',{min:1})}</div><div class="fld"><label>Average travel speed</label>${numIn('travel.speed',{min:1,suffix:'km/h'})}</div><div class="fld">${chk('travel.autoTravelHours','Automatically update staff travel hours')}</div></div></div>
+  <div class="card"><h3>${ico('bed')}Stay</h3><div class="inline"><span class="lab">Overnight stay required?</span>${seg('travel.stay')}</div><div class="row c2"><div class="fld"><label>People staying</label>${numIn('travel.staying',{auto:1,min:0,suffix:'people'})}</div><div class="fld"><label>Nights per mission</label>${numIn('travel.nights',{auto:1,min:0,suffix:'nights'})}</div><div class="fld"><label>Accommodation</label>${sel('travel.accom',LOCS.map(l=>[l,ACCOM_LBL[l]]))}</div></div></div>
+  <div class="card"><h3>${ico('food')}Meals</h3><div class="inline" style="flex-wrap:wrap;gap:22px">${chk('travel.breakfastRequired','Breakfast required?')}${chk('travel.lunch','Lunch required?')}${chk('travel.dinner','Dinner required?')}</div><div class="hint" style="margin-top:10px">Breakfast appears as a separate cost when not included in accommodation.</div></div>`;
+};
+const oldStepMaterials=stepMaterials;
+stepMaterials=function(){const base=oldStepMaterials();const custom=(F.customMaterials||[]).map((m,i)=>`<tr><td><b>${esc(m.name)}</b><div class="hint">${esc(m.item||'No standard-cost ID')}</div></td><td>${esc(m.unit||'item')}</td><td class="r">${nf(m.qty)}</td><td><button class="btn sm" data-remove-material="${i}" type="button">Remove</button></td></tr>`).join('');return base+`<div class="card"><h3>${ico('box')}Other materials</h3>${custom?`<table><thead><tr><th>Description</th><th>Unit</th><th class="r">Quantity</th><th></th></tr></thead><tbody>${custom}</tbody></table>`:'<div class="hint">No additional materials yet.</div>'}<div class="row c2" style="margin-top:16px"><div class="fld"><label>Description</label><input id="matName"></div><div class="fld"><label>Quantity</label><input id="matQty" type="number" min="0" value="1"></div><div class="fld"><label>Unit</label><input id="matUnit" placeholder="item / set / pack"></div><div class="fld"><label>Standard Cost ID (optional)</label><input id="matItem" placeholder="e.g. MAT012"></div></div><button class="btn" id="addMaterial" type="button">Add material</button></div>`;};
+const oldStepStaffTime=stepStaffTime;
+stepStaffTime=function(){autoStaffHours();return `<div class="inline" style="margin-bottom:12px">${chk('staffAuto','Automatically scale implementation hours with communities, missions and field days')}<button class="btn sm" id="recalcStaff" type="button">Recalculate now</button></div>`+oldStepStaffTime().replace('Other staff start at 0 hours.','Implementation hours scale against the P0.2 baseline of 2 communities, 1 mission and 5 field days. Travel hours come from the selected route. Custom staff can be adjusted manually.');};
+const oldCalc=calc;
+calc=function(){const c=oldCalc();(F.customMaterials||[]).forEach(m=>{if(m.item&&ITEMS[m.item]&&N(m.qty)>0){const o=ITEMS[m.item];const rate=N(o.rate);c.lines.push({id:m.item,desc:m.name||o.desc,unit:m.unit||o.unit,qty:N(m.qty),rate,total:N(m.qty)*rate,note:'Additional material'});if(rate>0)c.total+=N(m.qty)*rate;else c.priced=false;}});return c;};
+document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+  if(b.id==='addStaffMember'){const role=$('#newStaffRole').value.trim(),org=$('#newStaffOrg').value.trim();if(!role||!org){toast('Enter both a staff title and organisation.');return;}const id='CST'+String(Date.now()).slice(-6);const st={id,role,name:$('#newStaffName').value.trim(),org,custom:true};F.customStaff.push(st);STAFF.push(st);F.people.sel[id]={travel:$('#newStaffTravel').value==='yes',stay:true};F.staffTime[id]={preparation:0,implementation:0,followup:0,travel:0};autosave();render();toast('Staff member added.');}
+  if(b.id==='showRouteForm'){F.travel.showAddRoute=true;render();}
+  if(b.id==='saveRoute'){const origin=$('#routeFrom').value.trim(),dest=$('#routeTo').value.trim(),km=N($('#routeKm').value);if(!origin||!dest||km<=0){toast('Enter origin, destination and one-way distance.');return;}const r={id:'route-'+Date.now(),label:`${origin} → ${dest}`,origin,dest,km,speed:N($('#routeSpeed').value)||50};routeStore().push(r);F.travel.showAddRoute=false;F.travel.speed=r.speed;selectRoute(r.id);autosave();render();toast('Route saved for '+projectCountry()+'.');}
+  if(b.id==='addMaterial'){const name=$('#matName').value.trim(),qty=N($('#matQty').value);if(!name||qty<=0){toast('Enter a description and quantity.');return;}F.customMaterials.push({name,qty,unit:$('#matUnit').value.trim()||'item',item:$('#matItem').value.trim().toUpperCase()});autosave();render();toast('Material added.');}
+  if(b.dataset.removeMaterial!=null){F.customMaterials.splice(Number(b.dataset.removeMaterial),1);autosave();render();}
+  if(b.id==='recalcStaff'){autoStaffHours();autosave();render();toast('Staff hours recalculated.');}
+});
+document.addEventListener('change',e=>{if(!e.target)return;const p=e.target.dataset.path;if(p==='travel.route'){selectRoute(e.target.value);autosave();render();}if(p==='travel.breakfastRequired'){F.travel.breakfast=!F.travel.breakfastRequired;autosave();}if(['scope.communities','scope.missions','scope.days'].includes(p)&&F.staffAuto){autoStaffHours();autosave();}});
+
 try { const d = JSON.parse(localStorage.getItem(KEY)||'null'); if (d && d.scope) { F = Object.assign(defaults(), d); } } catch(e){}
+ensureV4(); autoStaffHours();
 render();
 </script>
 </body>
