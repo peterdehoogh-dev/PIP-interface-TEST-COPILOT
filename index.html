@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PIP Budget Generator - Staff Time</title>
+<title>PIP Budget Generator - P0.2 Complete Release</title>
 <style>
 :root{
   --navy:#0e2a55; --blue:#0b4a9e; --blue-d:#083a7e; --blue-l:#dbe8fb; --blue-xl:#eef4fd;
@@ -152,7 +152,7 @@ td input[type=number]{height:32px;width:90px}
 <div class="top">
   <h1>PIP Budget Generator</h1>
   <div class="right">
-    <span class="chip" id="chip">Test prototype · no workbook loaded</span>
+    <span class="chip" id="chip">P0.2 complete release · no workbook loaded</span>
     <button class="btn-top" id="loadBtn" type="button">Load workbook…</button>
     <input type="file" id="file" accept=".xlsx,.xlsm" hidden>
   </div>
@@ -267,11 +267,11 @@ const MATERIALS = [
 ];
 
 /* ───────── state ───────── */
-const KEY = 'pip-budget-p02-draft-v2-test';
+const KEY = 'pip-budget-p02-complete-v3';
 function defaults(){ return {
   scope:{loc:'Rural', communities:2, missions:1, days:5},
   people:{sel:{STF003:{travel:true}, STF004:{travel:true}}, guests:0},
-  travel:{need:true, transport:'org', origin:'Project Office', dest:'Project Area', km:340, vehicles:1,
+  travel:{need:true, route:'arusha-chemba', origin:'Project Office (Arusha)', dest:'Chemba Town', oneWayKm:205, trips:1, roundTrip:true, speed:50, autoTravelHours:true, transport:'org', km:410, vehicles:1,
           stay:true, staying:null, nights:null, accom:null, breakfast:true,
           lunch:true, lunchDays:null, dinner:true, dinnerEve:null},
   meet:{need:true, count:null, participants:25, venue:'none', venueDays:1, refresh:'none', feeGuests:false, translatorDays:0},
@@ -287,6 +287,17 @@ let F = defaults();
 let step = 1;
 let WB = null; // workbook info once loaded
 const STEPS = ['Scope','People','Travel & stay','Meetings','Materials','Staff time','Review'];
+const ROUTES = {
+  'arusha-chemba':{label:'Project Office (Arusha) → Chemba Town',origin:'Project Office (Arusha)',dest:'Chemba Town',km:205},
+  'arusha-dodoma':{label:'Project Office (Arusha) → Dodoma',origin:'Project Office (Arusha)',dest:'Dodoma',km:440},
+  'chemba-community':{label:'Chemba Town → Project community',origin:'Chemba Town',dest:'Project community',km:60},
+  'custom':{label:'Other route',origin:'',dest:'',km:0}
+};
+const routeDistance = () => N(F.travel.oneWayKm) * (F.travel.roundTrip?2:1) * Math.max(1,N(F.travel.trips));
+const travelHoursPerPerson = () => N(F.travel.speed)>0 ? routeDistance()/N(F.travel.speed) : 0;
+function applyRoutePreset(id){ const r=ROUTES[id]; if(!r) return; F.travel.route=id; if(id!=='custom'){F.travel.origin=r.origin;F.travel.dest=r.dest;F.travel.oneWayKm=r.km;} F.travel.km=routeDistance(); }
+function syncTravelHours(){ if(!F.travel.autoTravelHours) return; const hrs=Math.round(travelHoursPerPerson()*10)/10; STAFF.filter(st=>F.people.sel[st.id]&&F.people.sel[st.id].travel).forEach(st=>{if(!F.staffTime[st.id])F.staffTime[st.id]={preparation:0,implementation:0,followup:0,travel:0};F.staffTime[st.id].travel=hrs;}); }
+
 
 const N = v => { const x = Number(v); return isFinite(x) ? x : 0; };
 const get = (p, o=F) => p.split('.').reduce((a,k)=> a==null ? undefined : a[k], o);
@@ -319,7 +330,7 @@ function buildLines(){
   const L = [], t = F.travel, sc = F.scope, g = groupSize(), days = N(sc.days);
   const add = (id, qty, note) => { qty = N(qty); if (qty > 0 && ITEMS[id]) L.push({id, qty, note}); };
   if (t.need){
-    const veh = N(t.vehicles), km = N(t.km);
+    const veh = N(t.vehicles), km = routeDistance(); t.km=km;
     switch (t.transport){
       case 'org':   add('TRN004', km*veh, `${km} km return x ${veh} vehicle(s); ${t.origin} to ${t.dest}`); break;
       case 'moto':  add('TRN003', km*veh, `${km} km return x ${veh} motorbike(s); ${t.origin} to ${t.dest}`); break;
@@ -428,6 +439,19 @@ function stepPeople(){
 function stepTravel(){
   return `
   <h2 class="step-t">Travel &amp; stay</h2><p class="step-s">Review the suggested arrangements. Change only what differs.</p>
+  <div class="card"><h3>${ico('map')}Project route planner</h3>
+    <div class="row c2">
+      <div class="fld"><label>Saved project route</label>${sel('travel.route',Object.entries(ROUTES).map(([k,r])=>[k,r.label]))}<div class="hint">Choose a common route or select Other route.</div></div>
+      <div class="fld"><label>Number of trips</label>${numIn('travel.trips',{min:1,suffix:'trips'})}</div>
+      <div class="fld"><label>From</label><input type="text" data-path="travel.origin"></div>
+      <div class="fld"><label>To</label><input type="text" data-path="travel.dest"></div>
+      <div class="fld"><label>One-way distance</label>${numIn('travel.oneWayKm',{min:0,suffix:'km'})}</div>
+      <div class="fld"><label>Journey type</label>${sel('travel.roundTrip',[[true,'Return trip'],[false,'One way']])}</div>
+      <div class="fld"><label>Average travel speed</label>${numIn('travel.speed',{min:1,suffix:'km/h'})}</div>
+      <div class="fld"><label>Calculated distance</label><div class="rowline"><b>${nf(routeDistance())} km</b><span class="hint">${nf(travelHoursPerPerson())} hours per traveller</span></div></div>
+    </div>
+    <div class="inline" style="margin-top:12px">${chk('travel.autoTravelHours','Use calculated travel time for selected travelling staff')}<button class="btn sm" type="button" id="applyTravelHours">Apply travel hours now</button></div>
+  </div>
   <div class="card"><h3>${ico('car')}Travel arrangements</h3>
     <div class="inline"><span class="lab">Does anyone need to travel?</span>${seg('travel.need')}</div>
     <div data-vis="needTravel">
@@ -435,7 +459,7 @@ function stepTravel(){
       <div class="row c2">
         <div class="fld"><label>From (origin)</label>${sel('travel.origin', ['Project Office','Country Office','Capital city','District town','Partner office'].map(x=>[x,x]))}</div>
         <div class="fld"><label>To (destination)</label>${sel('travel.dest', ['Project Area','Candidate communities','District town','Capital city'].map(x=>[x,x]))}</div>
-        <div class="fld" data-vis="kmBased"><label>Return distance per mission</label>${numIn('travel.km',{suffix:'km'})}</div>
+        <div class="fld" data-vis="kmBased"><label>Total route distance</label><div class="rowline"><b>${nf(routeDistance())} km</b><span class="hint">Calculated above</span></div></div>
         <div class="fld" data-vis="vehicles"><label>Number of vehicles</label>${numIn('travel.vehicles',{min:1})}</div>
       </div>
       <div class="rowline"><span>${ico('users')} <span data-hint="travellers" style="margin-left:8px"></span></span><button class="link" type="button" data-goto="2">Edit people</button></div>
@@ -512,6 +536,13 @@ function stepStaffTime(){
 }
 function stepReview(){
   const c = calc(), nextN = WB ? WB.nextN : 29;
+  const issues=[];
+  if(!WB) issues.push('Load the project workbook to use its staff, standard costs and existing cost-line IDs.');
+  if(travellingStaff()===0) issues.push('No travelling staff selected.');
+  if(F.travel.need && routeDistance()<=0) issues.push('Travel is enabled but the route distance is zero.');
+  if(F.meet.need && N(F.meet.participants)<=0) issues.push('Meetings are enabled but participants are zero.');
+  if(totalStaffHours()<=0) issues.push('No staff hours have been entered.');
+  const validation = issues.length ? `<div class="alert warn">${ico('info')}<div><b>${issues.length} item(s) to check</b><ul class="steps-ol">${issues.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div></div>` : `<div class="alert good">${ico('check')}<div><b>Ready for export.</b> The core P0.2 inputs pass the interface checks.</div></div>`;
   const warn = [];
   if (!WB) warn.push(['warn','No workbook loaded: Cost Line IDs and the target row below are based on the template version (next free line CL029, row 36), and unit rates show as 0. Use “Load workbook…” at the top to confirm.']);
   if (WB && WB.existing.length) warn.push(['warn',`Your workbook already has ${WB.existing.length} cost line(s) for P0.2 (${WB.existing.map(e=>e.id).join(', ')}). Set those to Active = “No” (or delete them) before pasting the new lines, otherwise costs are counted twice.`]);
@@ -529,7 +560,9 @@ function stepReview(){
   const blocks = tr ? tr.blocks.map((b,i)=>`<div class="blk"><div><b>${i+1}. ${esc(b.label)}</b><div class="where">${esc(b.where)}</div></div><button class="btn sm" type="button" data-copy="${i}">${ico('copy')}Copy</button></div>`).join('') : '';
   return `
   <h2 class="step-t">Review</h2><p class="step-s">Check the cost lines, then bring them into your Excel workbook.</p>
+  ${validation}
   ${alerts}
+  <div class="card"><h3>${ico('map')}Travel plan</h3><div class="row c3" style="margin-top:0"><div><div class="hint">Route</div><b>${esc(F.travel.origin)} → ${esc(F.travel.dest)}</b></div><div><div class="hint">Total distance</div><b>${nf(routeDistance())} km</b></div><div><div class="hint">Travel time</div><b>${nf(travelHoursPerPerson())} hours per traveller</b></div></div></div>
   <div class="card"><h3>${ico('bars')}Cost lines for P0.2</h3>${table}</div>
   <div class="card"><h3>${ico('users')}Staff time for P0.2</h3>${staffTable}</div>
   ${tr ? `<div class="card"><h3>${ico('file')}Bring the lines into Excel</h3>
@@ -620,11 +653,15 @@ document.addEventListener('input', e => {
   if (el.type==='number') set(p, el.value===''?null:Number(el.value));
   else if (el.type==='checkbox') set(p, el.checked);
   else return;
+  if(['travel.oneWayKm','travel.trips','travel.speed'].includes(p)){F.travel.km=routeDistance(); if(F.travel.autoTravelHours) syncTravelHours();}
+  if(p==='travel.autoTravelHours' && get(p)) syncTravelHours();
   refresh(); autosave();
 });
 document.addEventListener('change', e => {
   const el = e.target; if (!el.matches || !el.matches('select[data-path]')) return;
-  set(el.dataset.path, el.value);
+  let sv=el.value; if(el.dataset.path==='travel.roundTrip') sv=(sv==='true'); set(el.dataset.path, sv);
+  if(el.dataset.path==='travel.route') applyRoutePreset(sv);
+  if(el.dataset.path==='travel.roundTrip'){F.travel.km=routeDistance(); if(F.travel.autoTravelHours) syncTravelHours();}
   if (el.dataset.path==='scope.loc') F.travel.accom = null;
   refresh(); autosave();
 });
@@ -637,6 +674,7 @@ document.addEventListener('click', e => {
   if (b.dataset.soon!==undefined) { toast('Not built yet in this prototype: only P0.2 is available.'); return; }
   if (b.dataset.phase) { const open = !b.classList.contains('collapsed'); b.classList.toggle('collapsed', open); $('#ph0').hidden = open; return; }
   if (b.id==='navReview') { step = 7; render(); return; }
+  if (b.id==='applyTravelHours') { syncTravelHours(); autosave(); render(); toast('Travel hours applied to travelling staff.'); return; }
   if (b.id==='dlx') { downloadXlsx(); return; }
   if (b.id==='resetForm') { if (confirm('Clear all entries for P0.2?')) { F = defaults(); try{localStorage.removeItem(KEY);}catch(_){} step=1; render(); toast('Form reset.'); } return; }
 });
@@ -719,8 +757,14 @@ function downloadXlsx(){
   const staffAoa = [['Activity ID','Staff ID','Staff role','Preparation hours','Implementation hours','Follow-up hours','Travel hours','Total hours']]
     .concat(STAFF.filter(st=>staffHours(st.id)>0).map(st=>{ const x=F.staffTime[st.id]||{}; return ['P0.2',st.id,st.role,N(x.preparation),N(x.implementation),N(x.followup),N(x.travel),staffHours(st.id)]; }));
   const wsStaff = XLSX.utils.aoa_to_sheet(staffAoa); wsStaff['!cols']=[12,12,28,18,20,16,14,14].map(w=>({wch:w}));
-  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'P0.2 cost lines'); XLSX.utils.book_append_sheet(wb, wsStaff, 'P0.2 staff time');
-  XLSX.writeFile(wb, 'PIP_P0.2_costs_and_staff_time.xlsx');
+  const travelAoa=[['Route field','Value'],['From',F.travel.origin],['To',F.travel.dest],['One-way km',N(F.travel.oneWayKm)],['Return trip',F.travel.roundTrip?'Yes':'No'],['Trips',N(F.travel.trips)],['Total route km',routeDistance()],['Average speed km/h',N(F.travel.speed)],['Travel hours per person',travelHoursPerPerson()],['Transport',F.travel.transport],['Vehicles',N(F.travel.vehicles)],['Travellers',groupSize()],['Nights',nights()]];
+  const wsTravel=XLSX.utils.aoa_to_sheet(travelAoa); wsTravel['!cols']=[28,45].map(w=>({wch:w}));
+  const summaryAoa=[['PIP P0.2 complete export',''],['Generated',new Date().toISOString()],['Workbook loaded',WB?'Yes':'No'],['Communities',N(F.scope.communities)],['Missions',missions()],['Mission days',days()],['Travelling staff',travellingStaff()],['Guests',guests()],['Total route km',routeDistance()],['Meetings',meetCount()],['Staff hours',totalStaffHours()],['Estimated cost',calc().total],['Currency',(WB&&WB.currency)||'']];
+  const wsSummary=XLSX.utils.aoa_to_sheet(summaryAoa); wsSummary['!cols']=[28,45].map(w=>({wch:w}));
+  const inputsAoa=[['Section','Field','Value'],['Scope','Location type',F.scope.loc],['Scope','Communities',F.scope.communities],['Scope','Missions',F.scope.missions],['Scope','Days',F.scope.days],['Meetings','Required',F.meet.need?'Yes':'No'],['Meetings','Count',meetCount()],['Meetings','Participants',F.meet.participants],['Meetings','Venue',F.meet.venue],['Meetings','Refreshments',F.meet.refresh]].concat(MATERIALS.filter(m=>F.mat[m.id]&&F.mat[m.id].on).map(m=>['Materials',m.label,matQty(m)]));
+  const wsInputs=XLSX.utils.aoa_to_sheet(inputsAoa); wsInputs['!cols']=[18,36,22].map(w=>({wch:w}));
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, wsSummary, 'P0.2 summary'); XLSX.utils.book_append_sheet(wb, ws, 'P0.2 cost lines'); XLSX.utils.book_append_sheet(wb, wsStaff, 'P0.2 staff time'); XLSX.utils.book_append_sheet(wb, wsTravel, 'P0.2 travel plan'); XLSX.utils.book_append_sheet(wb, wsInputs, 'P0.2 inputs');
+  XLSX.writeFile(wb, 'PIP_P0.2_complete_export.xlsx');
 }
 
 /* ───────── start ───────── */
